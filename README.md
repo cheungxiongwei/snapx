@@ -15,6 +15,7 @@ Windows 命令行截图工具。基于 `Windows.Graphics.Capture` API，通过�
 - JPEG 可指定质量
 - `-o -` 将图像写入 stdout，便于管道处理
 - 命令与选项分域：`snapx --help` 与 `snapx <command> --help`
+- 可执行文件图标由 RC 资源编译进 exe
 - 纯 Windows SDK 实现，无第三方依赖
 
 ## 系统要求
@@ -57,6 +58,8 @@ cmake --build --preset x64-release
 |---|---|
 | `x64-debug` | `build\x64-debug\snapx.exe` |
 | `x64-release` | `build\x64-release\snapx.exe` |
+
+exe 图标由 `res/snapx.ico` 经 `res/snapx.rc` 编译进可执行文件；更换图标只需替换 `res/snapx.ico`。
 
 ### 运行测试
 

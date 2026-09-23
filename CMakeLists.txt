@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(snapx LANGUAGES CXX)
+project(snapx LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,6 +16,7 @@ add_executable(snapx
     src/capture.cpp
     src/encode.cpp
     src/clipboard.cpp
+    res/snapx.rc
 )
 
 target_include_directories(snapx PRIVATE src)
