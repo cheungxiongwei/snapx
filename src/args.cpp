@@ -62,6 +62,10 @@ bool ParseUint32(const std::wstring& text, uint32_t& out) {
     return true;
 }
 
+bool IsOutputCommand(Command command) {
+    return command == Command::Capture || command == Command::Screen;
+}
+
 bool ParseDouble(const std::wstring& text, double& out) {
     if (text.empty()) {
         return false;
@@ -160,11 +164,19 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
                 return false;
             }
             options.command = Command::Capture;
+        } else if (!hasInline && lowered == L"screen") {
+            if (options.command != Command::None) {
+                error = L"unknown option '" + arg + L"'";
+                return false;
+            }
+            options.command = Command::Screen;
         } else if (lowered == L"--help") {
             if (options.command == Command::Scan) {
                 options.command = Command::ScanHelp;
             } else if (options.command == Command::Capture) {
                 options.command = Command::CaptureHelp;
+            } else if (options.command == Command::Screen) {
+                options.command = Command::ScreenHelp;
             } else {
                 options.command = Command::Help;
             }
@@ -185,7 +197,7 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
             options.hasPid = true;
             options.pid = pid;
         } else if (lowered == L"--output" || lowered == L"-o") {
-            if (options.command != Command::Capture) {
+            if (!IsOutputCommand(options.command)) {
                 error = L"unknown option '" + arg + L"'";
                 return false;
             }
@@ -200,7 +212,7 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
                 options.output = value;
             }
         } else if (lowered == L"--scale" || lowered == L"-s") {
-            if (options.command != Command::Capture) {
+            if (!IsOutputCommand(options.command)) {
                 error = L"unknown option '" + arg + L"'";
                 return false;
             }
@@ -219,7 +231,7 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
             }
             options.scale = scale;
         } else if (lowered == L"--quality" || lowered == L"-q") {
-            if (options.command != Command::Capture) {
+            if (!IsOutputCommand(options.command)) {
                 error = L"unknown option '" + arg + L"'";
                 return false;
             }
@@ -233,6 +245,12 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
                 return false;
             }
             options.jpegQuality = static_cast<int>(quality);
+        } else if (lowered == L"--clipboard" || lowered == L"-c") {
+            if (!IsOutputCommand(options.command)) {
+                error = L"unknown option '" + arg + L"'";
+                return false;
+            }
+            options.clipboard = true;
         } else {
             error = L"unknown option '" + arg + L"'";
             return false;
@@ -240,7 +258,7 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
     }
 
     if (options.command == Command::Help || options.command == Command::ScanHelp ||
-        options.command == Command::CaptureHelp) {
+        options.command == Command::CaptureHelp || options.command == Command::ScreenHelp) {
         return true;
     }
 
@@ -248,28 +266,31 @@ bool ParseCommandLine(int argc, wchar_t** argv, Options& options, std::wstring& 
         return true;
     }
 
-    if (options.command != Command::Capture) {
-        error = L"no command given; use scan or capture";
-        return false;
-    }
-
-    if (!options.hasPid) {
+    if (options.command == Command::Capture && !options.hasPid) {
         error = L"--pid is required";
         return false;
     }
 
-    if (!options.outputToStdout) {
-        if (!options.output.empty()) {
-            ImageFormat format = ImageFormat::Png;
-            if (!ResolveFormatFromOutput(options.output, format)) {
-                const size_t dot = options.output.find_last_of(L'.');
-                const std::wstring ext = (dot == std::wstring::npos)
-                                             ? options.output
-                                             : options.output.substr(dot);
-                error = L"unsupported output extension '" + ext +
-                        L"'; use png, jpeg, or bmp";
-                return false;
-            }
+    if (!IsOutputCommand(options.command)) {
+        error = L"no command given; use scan, capture, or screen";
+        return false;
+    }
+
+    if (options.clipboard && (options.outputToStdout || !options.output.empty())) {
+        error = L"--clipboard cannot be combined with --output";
+        return false;
+    }
+
+    if (!options.clipboard && !options.outputToStdout && !options.output.empty()) {
+        ImageFormat format = ImageFormat::Png;
+        if (!ResolveFormatFromOutput(options.output, format)) {
+            const size_t dot = options.output.find_last_of(L'.');
+            const std::wstring ext = (dot == std::wstring::npos)
+                                         ? options.output
+                                         : options.output.substr(dot);
+            error = L"unsupported output extension '" + ext +
+                    L"'; use png, jpeg, or bmp";
+            return false;
         }
     }
 
@@ -280,21 +301,24 @@ void PrintUsage() {
     std::wstring text;
     text += L"usage:\n";
     text += L"  snapx scan [--help]\n";
-    text += L"  snapx capture --pid <id> [-o <path>] [-s <n>] [-q <n>]\n";
+    text += L"  snapx capture --pid <id> [-o <path>] [-c] [-s <n>] [-q <n>]\n";
+    text += L"  snapx screen [-o <path>] [-c] [-s <n>] [-q <n>]\n";
     WriteStream(GetStdHandle(STD_ERROR_HANDLE), text);
 }
 
 void PrintHelp() {
     std::wstring text;
-    text += L"snapx - capture a Windows application window to an image file\n";
+    text += L"snapx - capture a Windows application window or the primary display to an image\n";
     text += L"\n";
     text += L"usage:\n";
     text += L"  snapx scan [--help]\n";
-    text += L"  snapx capture --pid <id> [-o <path>] [-s <n>] [-q <n>]\n";
+    text += L"  snapx capture --pid <id> [-o <path>] [-c] [-s <n>] [-q <n>]\n";
+    text += L"  snapx screen [-o <path>] [-c] [-s <n>] [-q <n>]\n";
     text += L"\n";
     text += L"commands:\n";
     text += L"  scan      list capturable windows\n";
     text += L"  capture   capture one window by process id\n";
+    text += L"  screen    capture the primary display\n";
     text += L"\n";
     text += L"run 'snapx <command> --help' for details\n";
     WriteStream(GetStdHandle(STD_OUTPUT_HANDLE), text);
@@ -320,19 +344,42 @@ void PrintCaptureHelp() {
     text += L"snapx capture - capture one window by process id\n";
     text += L"\n";
     text += L"usage:\n";
-    text += L"  snapx capture --pid <id> [-o <path>] [-s <n>] [-q <n>]\n";
+    text += L"  snapx capture --pid <id> [-o <path>] [-c] [-s <n>] [-q <n>]\n";
     text += L"\n";
     text += L"options:\n";
     text += L"  --pid <id>        process id to capture (required)\n";
     text += L"  -o, --output <p>  output path, '-' for stdout, else <process>_<pid>_<time>.<ext> (.png .jpg .jpeg .bmp)\n";
+    text += L"  -c, --clipboard   copy the screenshot to the clipboard instead of writing a file\n";
     text += L"  -s, --scale <n>   output size multiplier, default 1.0, range (0.0, 5.0]\n";
     text += L"  -q, --quality <n> JPEG quality, default 90, range 1-100\n";
     text += L"\n";
     text += L"examples:\n";
     text += L"  snapx capture --pid 4608\n";
     text += L"  snapx capture --pid 4608 -o shot.png\n";
+    text += L"  snapx capture --pid 4608 -c\n";
     text += L"  snapx capture --pid 4608 -o shot.jpg -q 80\n";
     text += L"  snapx capture --pid 4608 -o - > shot.png\n";
+    WriteStream(GetStdHandle(STD_OUTPUT_HANDLE), text);
+}
+
+void PrintScreenHelp() {
+    std::wstring text;
+    text += L"snapx screen - capture the primary display\n";
+    text += L"\n";
+    text += L"usage:\n";
+    text += L"  snapx screen [-o <path>] [-c] [-s <n>] [-q <n>]\n";
+    text += L"\n";
+    text += L"options:\n";
+    text += L"  -o, --output <p>  output path, '-' for stdout, else screen_<time>.<ext> (.png .jpg .jpeg .bmp)\n";
+    text += L"  -c, --clipboard   copy the screenshot to the clipboard instead of writing a file\n";
+    text += L"  -s, --scale <n>   output size multiplier, default 1.0, range (0.0, 5.0]\n";
+    text += L"  -q, --quality <n> JPEG quality, default 90, range 1-100\n";
+    text += L"\n";
+    text += L"examples:\n";
+    text += L"  snapx screen\n";
+    text += L"  snapx screen -o shot.png\n";
+    text += L"  snapx screen -c\n";
+    text += L"  snapx screen -o - > shot.png\n";
     WriteStream(GetStdHandle(STD_OUTPUT_HANDLE), text);
 }
 

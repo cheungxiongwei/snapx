@@ -16,4 +16,6 @@ struct CaptureResult {
 
 bool CaptureWindow(HWND hwnd, uint32_t timeoutMs, CaptureResult& result, std::wstring& error);
 
+bool CaptureMonitor(HMONITOR monitor, uint32_t timeoutMs, CaptureResult& result, std::wstring& error);
+
 }

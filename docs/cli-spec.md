@@ -6,12 +6,13 @@
 
 ```
 snapx scan
-snapx capture --pid <id> [-o <path>] [-s <n>] [-q <n>]
+snapx capture --pid <id> [-o <path>] [-c] [-s <n>] [-q <n>]
+snapx screen [-o <path>] [-c] [-s <n>] [-q <n>]
 snapx --help
 snapx <command> --help
 ```
 
-`snapx` 采用命令（操作域）模型，参考 Docker CLI：每个命令是可独立理解、独立获取帮助的操作域，命令的选项只属于该域，不在命令之间复用。当前有两个操作域：`scan` 列出可截图窗口，`capture` 截取单个窗口。`capture` 每次调用只处理一个目标窗口，目标由进程 ID (`--pid`) 唯一确定，不存在按标题匹配带来的同名多进程歧义。
+`snapx` 采用命令（操作域）模型，参考 Docker CLI：每个命令是可独立理解、独立获取帮助的操作域，命令的选项只属于该域，不在命令之间复用。当前有三个操作域：`scan` 列出可截图窗口，`capture` 截取单个窗口，`screen` 截取主显示器全屏。`capture` 每次调用只处理一个目标窗口，目标由进程 ID (`--pid`) 唯一确定，不存在按标题匹配带来的同名多进程歧义。`capture` 与 `screen` 共享同名的输出选项（`-o`、`-c`、`-s`、`-q`），但按命令域各自独立校验。
 
 ## 2. 词法规则
 
@@ -31,11 +32,13 @@ snapx <command> --help
 |---|---|
 | `scan` | 列出可截图窗口后退出。不接受任何截图选项 |
 | `capture` | 截取一个窗口，需 `--pid` |
+| `screen` | 截取主显示器全屏，不接受 `--pid` |
 | `--help` | 顶层或命令级帮助 |
 
 - 命令必须显式给出，不可省略。`snapx --pid 1` 报 `unknown option '--pid'`（选项先于命令出现）。
-- 无参数、无命令时报 `no command given; use scan or capture`（退出码 2）。
+- 无参数、无命令时报 `no command given; use scan, capture, or screen`（退出码 2）。
 - 给 `scan` 传截图选项报 `unknown option '<opt>'`（退出码 2），体现选项命名空间隔离。
+- 给 `screen` 传 `--pid` 报 `unknown option '--pid'`（退出码 2）。
 - 重复命令（如 `snapx scan capture`）报 `unknown option 'capture'`（退出码 2）。
 
 ### 3.2 capture options
@@ -44,6 +47,16 @@ snapx <command> --help
 |---|---|---|---|
 | `--pid <id>` | 十进制 `uint32` | 无 | 截取该进程 ID 的窗口。必填 |
 | `-o`, `--output <path>` | 路径或 `-` | 自动命名 | 输出目标。`-` 表示写 stdout；无扩展名视为 `.png`；省略时自动命名为 `<process>_<pid>_<timestamp>.<ext>` |
+| `-c`, `--clipboard` | 开关 | 关 | 复制到剪贴板，不写文件；与 `-o` 互斥 |
+| `-s`, `--scale <value>` | 浮点，`(0.0, 5.0]` | `1.0` | 输出尺寸倍数，经 WIC 高质量插值 |
+| `-q`, `--quality <1-100>` | 整数 | `90` | JPEG 质量；仅对 JPEG 生效 |
+
+### 3.3 screen options
+
+| 选项 | 取值 | 默认 | 说明 |
+|---|---|---|---|
+| `-o`, `--output <path>` | 路径或 `-` | 自动命名 | 输出目标。`-` 表示写 stdout；无扩展名视为 `.png`；省略时自动命名为 `screen_<timestamp>.<ext>` |
+| `-c`, `--clipboard` | 开关 | 关 | 复制到剪贴板，不写文件；与 `-o` 互斥 |
 | `-s`, `--scale <value>` | 浮点，`(0.0, 5.0]` | `1.0` | 输出尺寸倍数，经 WIC 高质量插值 |
 | `-q`, `--quality <1-100>` | 整数 | `90` | JPEG 质量；仅对 JPEG 生效 |
 
@@ -53,6 +66,7 @@ snapx <command> --help
 - `--quality` 必须为 `1..100`，否则报错。
 - `--scale` 导致输出宽或高为 0 像素时报错（退出码 1，编码阶段）。
 - 缺少 `--pid` 时报 `--pid is required`（退出码 2）。
+- `-c` 与 `-o`（含 `-o -`）同时给出时报 `--clipboard cannot be combined with --output`（退出码 2）。
 
 ## 4. 输出格式
 
@@ -67,6 +81,7 @@ snapx <command> --help
 - 扩展名识别以最后一个 `.` 为准，且该 `.` 必须位于最后一个路径分隔符之后（`ResolveFormatFromOutput`）。
 - 其他扩展名在参数校验阶段直接报错 `unsupported output extension '...'; use png, jpeg, or bmp`（退出码 2）。
 - `-o -`（stdout）时无扩展名可推断，默认 PNG。
+- `-c` 时不写文件，格式规则仅用于 `-o`，对剪贴板不适用（见 5.7）。
 
 ## 5. 行为语义
 
@@ -99,11 +114,26 @@ snapx <command> --help
 - `-o -` 时，先编码到系统临时文件，再以分块 `WriteFile` 复制到 stdout，随后删除临时文件。stdout 仅含图像字节。
 - 所有提示、错误一律写 stderr。非控制台句柄下文本以 UTF-8 字节输出；控制台句柄下用 `WriteConsoleW`。
 
+### 5.6 全屏截图
+
+- `screen` 通过 `MonitorFromPoint({0,0}, MONITOR_DEFAULTTOPRIMARY)` 取得主显示器，经 `IGraphicsCaptureItemInterop::CreateForMonitor` 创建捕获项；取帧与像素读取流程与窗口截图一致（5.3）。
+- 主显示器截图无窗口恢复流程，也不绘制窗口黄色边框。
+- 主显示器不可用时按截图失败处理（退出码 1）。
+- 自动命名规则：`screen_<YYYYMMDD-HHMMSS>.<ext>`。
+
+### 5.7 剪贴板模式
+
+- `-c` / `--clipboard` 把截图写入剪贴板，不写文件。`-s` 同样作用于剪贴板内容；`-q` 与 `-o` 的扩展名对其无效。
+- 剪贴板内容同时提供两种格式：`CF_DIB`（32bpp 自下而上位图）与注册格式 `PNG`（WIC 编码），以兼容画图、Office 与浏览器等应用。
+- 打开剪贴板失败时最多重试 10 次、每次间隔 10ms。
+- 成功时向 stdout 打印 `copied <W>x<H> to clipboard`，其中宽高为缩放后的尺寸。
+- 剪贴板写入失败报 `Cannot write the image to the clipboard.`（退出码 1）。
+
 ## 6. 退出码
 
 | 退出码 | 含义 |
 |---|---|
-| `0` | 成功（含 `--help`、`scan`、`-o -` 成功） |
+| `0` | 成功（含 `--help`、`scan`、`screen`、`-o -`、`-c` 成功） |
 | `1` | 未匹配到窗口，或截图/编码/读写失败 |
 | `2` | 参数错误：未知选项、缺值、取值非法、未知扩展名、缺少 `--pid`、缺少命令、选项先于命令 |
 
@@ -121,11 +151,13 @@ snapx <command> --help
 | scale 越界 | `error: --scale must be in (0.0, 5.0], got <value>` |
 | quality 越界 | `error: --quality must be 1-100, got <value>` |
 | 缺少 `--pid` | `error: --pid is required` |
-| 缺少命令 | `error: no command given; use scan or capture` |
+| 缺少命令 | `error: no command given; use scan, capture, or screen` |
+| 剪贴板与输出冲突 | `error: --clipboard cannot be combined with --output` |
 | 扩展名不支持 | `error: unsupported output extension '<ext>'; use png, jpeg, or bmp` |
 | 无窗口 | `error: no capturable window for pid <id>` |
 | 缩放为零尺寸 | `error: --scale produces a zero-sized image` |
 | 无法写入 | `error: Cannot write '<path>'` |
+| 无法写剪贴板 | `error: Cannot write the image to the clipboard.` |
 
 注：帮助、扫描列表与错误消息当前均为英文；usage 与 help 文本见 `src/args.cpp` 的 `PrintUsage` / `PrintHelp` / `PrintScanHelp` / `PrintCaptureHelp`。
 
@@ -135,9 +167,10 @@ snapx <command> --help
 
 - 同一 `--pid` 在枚举规则不变时映射到同一窗口。
 - `-o -` 的 stdout 可安全重定向到文件或管道。
-- `scan` 与 `capture` 的错误与退出码符合第 6、7 节。
-- 选项按命令隔离：`scan` 只接受 `--help`，截图选项仅属于 `capture`。
-- `snapx --help`、`snapx scan --help`、`snapx capture --help` 分别输出总帮助与命令级帮助，退出码 0。
+- `scan`、`capture`、`screen` 的错误与退出码符合第 6、7 节。
+- 选项按命令隔离：`scan` 只接受 `--help`，`capture` 需 `--pid`，`screen` 拒绝 `--pid`；截图输出选项仅属于 `capture` 与 `screen`。
+- `snapx --help`、`snapx scan --help`、`snapx capture --help`、`snapx screen --help` 分别输出总帮助与命令级帮助，退出码 0。
+- `-c` 成功后剪贴板至少包含 `CF_DIB` 或注册 `PNG` 之一。
 
 非保证：
 

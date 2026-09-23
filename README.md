@@ -2,12 +2,14 @@
 
 Windows 命令行截图工具。基于 `Windows.Graphics.Capture` API，通过进程 ID 截取指定应用窗口，支持 PNG / JPEG / BMP 输出。
 
-完整命令行约定见 [`docs/cli-spec.md`](docs/cli-spec.md)，命令行界面设计风格见 [`docs/cli-design.md`](docs/cli-design.md)。
+需求规格见 [`docs/requirements.md`](docs/requirements.md)，完整命令行约定见 [`docs/cli-spec.md`](docs/cli-spec.md)，命令行界面设计风格见 [`docs/cli-design.md`](docs/cli-design.md)，内部模块划分见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 特性
 
 - `snapx scan` 列出当前可截图的窗口（PID、进程名、窗口标题）
 - `snapx capture --pid <id>` 精确截取单个窗口，不存在同名多进程歧义
+- `snapx screen` 截取主显示器全屏
+- `-c` / `--clipboard` 把截图直接复制到剪贴板，免落盘
 - 输出 PNG、JPEG、BMP，格式由 `-o` 扩展名决定
 - `--scale` 无损放大/缩小输出尺寸
 - JPEG 可指定质量
@@ -70,7 +72,8 @@ ctest --preset x64-debug
 
 ```
 snapx scan
-snapx capture --pid <id> [-o <path>] [-s <n>] [-q <n>]
+snapx capture --pid <id> [-o <path>] [-c] [-s <n>] [-q <n>]
+snapx screen [-o <path>] [-c] [-s <n>] [-q <n>]
 ```
 
 ### 列出窗口（scan）
@@ -126,22 +129,46 @@ build\x64-release\snapx.exe capture --pid 4608 -o - > shot.png
 build\x64-release\snapx.exe capture --pid 4608 -o - | magick png:- shot.webp
 ```
 
+### 全屏截图（screen）
+
+`snapx screen` 截取主显示器（`MONITOR_DEFAULTTOPRIMARY`）整屏，选项与 `capture` 相同，只是不需要 `--pid`：
+
+```bat
+build\x64-release\snapx.exe screen
+# saved 3840x2160 (PNG) to screen_20260924-101500.png
+build\x64-release\snapx.exe screen -o shot.png
+build\x64-release\snapx.exe screen -o - > shot.png
+```
+
+### 复制到剪贴板（-c）
+
+`-c` / `--clipboard` 把截图直接写入剪贴板，不落盘，可用于 `capture` 与 `screen`。剪贴板同时提供 `CF_DIB` 与 `PNG` 两种格式，兼容画图、Office 与浏览器等应用。`-c` 与 `-o` 互斥；`-s` 同样作用于剪贴板内容。
+
+```bat
+build\x64-release\snapx.exe screen -c
+# copied 3840x2160 to clipboard
+build\x64-release\snapx.exe capture --pid 4608 -c
+build\x64-release\snapx.exe screen -c -s 0.5
+```
+
 ## 命令行界面
 
-`snapx` 采用命令（操作域）模型，参考 Docker CLI：命令是可独立理解、独立获取帮助的操作域，命令的选项只属于该域。当前有两个命令：`scan` 与 `capture`。
+`snapx` 采用命令（操作域）模型，参考 Docker CLI：命令是可独立理解、独立获取帮助的操作域，命令的选项只属于该域。当前有三个命令：`scan`、`capture` 与 `screen`。
 
 顶层帮助（`snapx --help`）：
 
 ```
-snapx - capture a Windows application window to an image file
+snapx - capture a Windows application window or the primary display to an image
 
 usage:
   snapx scan [--help]
-  snapx capture --pid <id> [-o <path>] [-s <n>] [-q <n>]
+  snapx capture --pid <id> [-o <path>] [-c] [-s <n>] [-q <n>]
+  snapx screen [-o <path>] [-c] [-s <n>] [-q <n>]
 
 commands:
   scan      list capturable windows
   capture   capture one window by process id
+  screen    capture the primary display
 
 run 'snapx <command> --help' for details
 ```
@@ -151,12 +178,14 @@ run 'snapx <command> --help' for details
 ```bat
 build\x64-release\snapx.exe scan --help
 build\x64-release\snapx.exe capture --help
+build\x64-release\snapx.exe screen --help
 ```
 
 | 命令 | 说明 |
 |---|---|
 | `scan` | 列出可截图窗口；不接受截图选项 |
 | `capture` | 截取一个窗口，需 `--pid` |
+| `screen` | 截取主显示器全屏 |
 
 命令必须显式给出：`snapx --pid 4608` 会因选项先于命令而报错，应写 `snapx capture --pid 4608`。
 
@@ -166,8 +195,11 @@ build\x64-release\snapx.exe capture --help
 |---|---|
 | `--pid <id>` | 截取指定进程 ID 的窗口（必填） |
 | `-o`, `--output <path>` | 输出路径；`-` 表示写 stdout；无扩展名补 `.png`；省略时自动命名 `<process>_<pid>_<timestamp>.<ext>` |
+| `-c`, `--clipboard` | 复制到剪贴板而非写文件；与 `-o` 互斥 |
 | `-s`, `--scale <value>` | 输出尺寸倍数，默认 `1.0`，范围 `(0.0, 5.0]` |
 | `-q`, `--quality <1-100>` | JPEG 质量，默认 `90`（仅 jpeg 生效） |
+
+`screen` 选项与 `capture` 相同，但没有 `--pid`，自动命名为 `screen_<timestamp>.<ext>`。
 
 支持 `--key=value` 形式，例如 `--pid=4608 --output=shot.png`。
 
@@ -195,9 +227,10 @@ build\x64-release\snapx.exe capture --pid 4608 -o - | magick png:- shot.webp
 
 ## 行为说明
 
-- 每次 `capture` 只截取一个窗口（由 `--pid` 指定）。
+- 每次 `capture` 只截取一个窗口（由 `--pid` 指定）；`screen` 截取主显示器整屏。
 - 支持最小化窗口：目标若处于最小化状态，会先恢复、截图、再恢复为最小化，窗口状态保持不变。恢复期间窗口会短暂可见。
-- 截图期间目标窗口周围会显示系统绘制的黄色边框，这是 `Windows.Graphics.Capture` 的固有行为，无法关闭。
+- 截图期间目标窗口周围会显示系统绘制的黄色边框，这是 `Windows.Graphics.Capture` 的固有行为，无法关闭（`screen` 全屏截图无此边框）。
+- `-c` 时只写剪贴板，不产生文件；`-c` 与 `-o` 同时给出会以退出码 2 报错。
 - `-o -` 时 stdout 只包含图像字节，所有提示与错误一律写入 stderr。
 - 编码使用 WIC；`--scale` 通过 WIC 高质量插值完成。
 

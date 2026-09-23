@@ -1,5 +1,6 @@
 #include "args.h"
 #include "capture.h"
+#include "clipboard.h"
 #include "encode.h"
 #include "window_enum.h"
 
@@ -83,6 +84,10 @@ std::wstring AutoOutputName(const snapx::WindowInfo& window, ImageFormat format)
     }
     return SanitizeFileName(base) + L"_" + std::to_wstring(window.processId) + L"_" +
            TimestampNow() + snapx::FormatExtension(format);
+}
+
+std::wstring AutoScreenName(ImageFormat format) {
+    return L"screen_" + TimestampNow() + snapx::FormatExtension(format);
 }
 
 int RunList() {
@@ -170,41 +175,68 @@ int wmain(int argc, wchar_t** argv) {
     case snapx::Command::CaptureHelp:
         snapx::PrintCaptureHelp();
         return 0;
+    case snapx::Command::ScreenHelp:
+        snapx::PrintScreenHelp();
+        return 0;
     case snapx::Command::Scan:
         return RunList();
     case snapx::Command::Capture:
+    case snapx::Command::Screen:
         break;
     case snapx::Command::None:
-        FailUsage(L"no command given; use scan or capture");
+        FailUsage(L"no command given; use scan, capture, or screen");
     }
 
+    const bool fullScreen = options.command == snapx::Command::Screen;
     snapx::WindowInfo window;
-    if (!snapx::FindWindowByPid(options.pid, window)) {
-        WriteStdErr(L"error: no capturable window for pid " +
-                    std::to_wstring(options.pid) + L"\n");
-        return 1;
-    }
-
-    const bool wasMinimized = window.minimized;
-    if (wasMinimized) {
-        ShowWindow(window.hwnd, SW_RESTORE);
-        const DWORD deadline = GetTickCount() + 2000;
-        while (IsIconic(window.hwnd) && GetTickCount() < deadline) {
-            Sleep(20);
-        }
-        Sleep(100);
-    }
-
     snapx::CaptureResult image;
-    const bool captured = snapx::CaptureWindow(window.hwnd, 5000, image, error);
+    bool captured = false;
 
-    if (wasMinimized) {
-        ShowWindow(window.hwnd, SW_MINIMIZE);
+    if (fullScreen) {
+        HMONITOR monitor = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        captured = snapx::CaptureMonitor(monitor, 5000, image, error);
+    } else {
+        if (!snapx::FindWindowByPid(options.pid, window)) {
+            WriteStdErr(L"error: no capturable window for pid " +
+                        std::to_wstring(options.pid) + L"\n");
+            return 1;
+        }
+
+        const bool wasMinimized = window.minimized;
+        if (wasMinimized) {
+            ShowWindow(window.hwnd, SW_RESTORE);
+            const DWORD deadline = GetTickCount() + 2000;
+            while (IsIconic(window.hwnd) && GetTickCount() < deadline) {
+                Sleep(20);
+            }
+            Sleep(100);
+        }
+
+        captured = snapx::CaptureWindow(window.hwnd, 5000, image, error);
+
+        if (wasMinimized) {
+            ShowWindow(window.hwnd, SW_MINIMIZE);
+        }
     }
 
     if (!captured) {
         WriteStdErr(L"error: " + error + L"\n");
         return 1;
+    }
+
+    const uint32_t outWidth = static_cast<uint32_t>(
+        std::lround(static_cast<double>(image.width) * options.scale));
+    const uint32_t outHeight = static_cast<uint32_t>(
+        std::lround(static_cast<double>(image.height) * options.scale));
+
+    if (options.clipboard) {
+        if (!snapx::CopyImageToClipboard(image, options.scale, error)) {
+            WriteStdErr(L"error: " + error + L"\n");
+            return 1;
+        }
+        WriteStdOut(L"copied " + std::to_wstring(outWidth) + L"x" +
+                    std::to_wstring(outHeight) + L" to clipboard\n");
+        return 0;
     }
 
     ImageFormat format = ImageFormat::Png;
@@ -217,17 +249,14 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
 
-    std::wstring path = options.output.empty() ? AutoOutputName(window, format)
-                                               : options.output;
+    std::wstring path = options.output.empty()
+                            ? (fullScreen ? AutoScreenName(format)
+                                          : AutoOutputName(window, format))
+                            : options.output;
     if (!snapx::EncodeToFile(image, path, format, options.jpegQuality, options.scale, error)) {
         WriteStdErr(L"error: " + error + L"\n");
         return 1;
     }
-
-    const uint32_t outWidth = static_cast<uint32_t>(
-        std::lround(static_cast<double>(image.width) * options.scale));
-    const uint32_t outHeight = static_cast<uint32_t>(
-        std::lround(static_cast<double>(image.height) * options.scale));
 
     WriteStdOut(L"saved " + std::to_wstring(outWidth) + L"x" +
                 std::to_wstring(outHeight) + L" (" + FormatName(format) + L") to " +

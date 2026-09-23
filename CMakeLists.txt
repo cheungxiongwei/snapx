@@ -15,6 +15,7 @@ add_executable(snapx
     src/window_enum.cpp
     src/capture.cpp
     src/encode.cpp
+    src/clipboard.cpp
 )
 
 target_include_directories(snapx PRIVATE src)
@@ -45,10 +46,17 @@ add_test(NAME top-help COMMAND snapx --help)
 add_test(NAME scan-command COMMAND snapx scan)
 add_test(NAME scan-help COMMAND snapx scan --help)
 add_test(NAME capture-help COMMAND snapx capture --help)
+add_test(NAME screen-help COMMAND snapx screen --help)
 add_test(NAME no-args COMMAND snapx)
 set_tests_properties(no-args PROPERTIES WILL_FAIL TRUE)
 add_test(NAME missing-pid COMMAND snapx capture -o shot.png)
 set_tests_properties(missing-pid PROPERTIES WILL_FAIL TRUE)
+add_test(NAME screen-rejects-pid COMMAND snapx screen --pid 1)
+set_tests_properties(screen-rejects-pid PROPERTIES WILL_FAIL TRUE)
+add_test(NAME clipboard-with-output COMMAND snapx capture --pid 1 -c -o shot.png)
+set_tests_properties(clipboard-with-output PROPERTIES WILL_FAIL TRUE)
+add_test(NAME clipboard-before-command COMMAND snapx -c)
+set_tests_properties(clipboard-before-command PROPERTIES WILL_FAIL TRUE)
 add_test(NAME bad-pid COMMAND snapx capture --pid abc)
 set_tests_properties(bad-pid PROPERTIES WILL_FAIL TRUE)
 add_test(NAME bad-scale COMMAND snapx capture --pid 1 --scale 6)

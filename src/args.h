@@ -19,6 +19,8 @@ enum class Command {
     Scan,
     CaptureHelp,
     Capture,
+    ScreenHelp,
+    Screen,
 };
 
 struct Options {
@@ -29,6 +31,7 @@ struct Options {
 
     std::wstring output;
     bool outputToStdout = false;
+    bool clipboard = false;
 
     double scale = 1.0;
     int jpegQuality = 90;
@@ -40,6 +43,7 @@ void PrintUsage();
 void PrintHelp();
 void PrintScanHelp();
 void PrintCaptureHelp();
+void PrintScreenHelp();
 
 std::wstring FormatExtension(ImageFormat format);
 bool ParseFormat(const std::wstring& text, ImageFormat& format);
